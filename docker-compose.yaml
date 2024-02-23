@@ -1,0 +1,60 @@
+version: '3'
+services:
+  jaeger-all-in-one:
+    image: jaegertracing/all-in-one:latest
+    restart: always
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:latest
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./.docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    restart: always
+    command: ["--config", "/etc/otel-collector-config.yml"]
+    ports:
+      - "8888:8888" ## utilizamos para permitir que o prometheus colete métricas do otel-collector
+      - "8889:8889" ## utilizamos para permitir que o prometheus colete métricas do otel-collector
+      - "4317:4317"
+    volumes:
+      - ./.docker/otel-collector/otel-collector-config.yml:/etc/otel-collector-config.yml
+
+  go-service-a:
+    container_name: go-service-a
+    build:
+      context: service-a/
+    environment:
+      - EXTERNAL_CALL_URL=http://go-service-b:8181
+      - OTEL_SERVICE_NAME=go-service-a
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - HTTP_PORT=8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      - otel-collector
+      - jaeger-all-in-one
+      - prometheus
+
+  go-service-b:
+    container_name: go-service-b
+    build:
+      context: service-b/
+    environment:
+      - OTEL_SERVICE_NAME=go-service-b
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - HTTP_PORT=8181
+    ports:
+      - "8181:8181"
+    depends_on:
+      - otel-collector
+      - jaeger-all-in-one
+      - prometheus      
