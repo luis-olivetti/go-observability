@@ -19,7 +19,7 @@ Basedo no cenário conhecido "Sistema de temperatura por CEP" denominado Serviç
 ### Serviço B (responsável pela orquestração):
 
 - O sistema deve receber um CEP válido de 8 digitos
-- O sistema deve realizar a pesquisa do CEP e encontrar o nome da localização, a partir disso, deverá retornar as temperaturas e formata-lás em: Celsius, Fahrenheit, Kelvin juntamente com o nome da localização.
+- O sistema deve realizar a pesquisa do CEP e encontrar o nome da localização, a partir disso, deverá retornar as temperaturas e formatá-las em: Celsius, Fahrenheit e Kelvin. Juntamente com o nome da localização.
 - O sistema deve responder adequadamente nos seguintes cenários:
     - Em caso de sucesso:
         Código HTTP: 200
