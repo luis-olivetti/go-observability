@@ -107,10 +107,6 @@ func initProvider(serviceName, collectorUrl string) (func(context.Context) error
 }
 
 func init() {
-	// remover isso depois pois vai usar o dockerfile
-	// viper.SetConfigFile(".env")
-	// viper.ReadInConfig()
-
 	viper.AutomaticEnv()
 }
 

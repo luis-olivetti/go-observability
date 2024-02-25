@@ -192,17 +192,14 @@ func zipcodeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func makeHTTPRequestWithPropagation(ctx context.Context, url string) (*http.Response, error) {
-	// Crie uma solicitação HTTP manualmente
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Obtenha o propagador de contexto e injete-o no cabeçalho da solicitação
 	propagator := otel.GetTextMapPropagator()
 	propagator.Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	// Faça a solicitação HTTP com a solicitação que você criou
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
