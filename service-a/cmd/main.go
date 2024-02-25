@@ -132,7 +132,10 @@ func main() {
 }
 
 func zipcodeHandler(w http.ResponseWriter, r *http.Request) {
+	carrier := propagation.HeaderCarrier(r.Header)
 	ctx := r.Context()
+	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+
 	ctx, span := tracer.Start(ctx, "zipcodeHandler")
 	defer span.End()
 
@@ -154,7 +157,7 @@ func zipcodeHandler(w http.ResponseWriter, r *http.Request) {
 	_, citySpan := tracer.Start(ctx, "SearchCityByZipCode")
 	defer citySpan.End()
 
-	resp, err := http.Get(viper.GetString("EXTERNAL_CALL_URL") + "/city-weather?zipcode=" + msg.ZipCode)
+	resp, err := makeHTTPRequestWithPropagation(ctx, viper.GetString("EXTERNAL_CALL_URL")+"/city-weather?zipcode="+msg.ZipCode)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		span.RecordError(err)
@@ -186,4 +189,25 @@ func zipcodeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(cityWeatherResponse)
+}
+
+func makeHTTPRequestWithPropagation(ctx context.Context, url string) (*http.Response, error) {
+	// Crie uma solicitação HTTP manualmente
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Obtenha o propagador de contexto e injete-o no cabeçalho da solicitação
+	propagator := otel.GetTextMapPropagator()
+	propagator.Inject(ctx, propagation.HeaderCarrier(req.Header))
+
+	// Faça a solicitação HTTP com a solicitação que você criou
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }

@@ -262,8 +262,11 @@ func getWeather(cityName string, w http.ResponseWriter, r *http.Request) *Weathe
 }
 
 func cityWeatherHandler(w http.ResponseWriter, r *http.Request) {
+	carrier := propagation.HeaderCarrier(r.Header)
 	ctx := r.Context()
-	_, span := tracer.Start(ctx, "cityWeatherHandler")
+	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+
+	ctx, span := tracer.Start(ctx, "cityWeatherHandler")
 	defer span.End()
 
 	if !validParams(w, r) {
@@ -273,15 +276,25 @@ func cityWeatherHandler(w http.ResponseWriter, r *http.Request) {
 
 	zipCode := r.URL.Query().Get("zipcode")
 
+	ctx, viaCepSpan := tracer.Start(ctx, "getViaCep")
+	defer viaCepSpan.End()
+
 	viacepReturn := getViaCep(zipCode, w, r)
 	if viacepReturn == nil {
-		span.RecordError(fmt.Errorf("failed to get city name"))
+		viaCepSpan.RecordError(fmt.Errorf("failed to get city name"))
 		return
 	}
 
 	cityName := viacepReturn.Localidade
 
+	_, weatherSpan := tracer.Start(ctx, "getWeather")
+	defer weatherSpan.End()
+
 	weatherReturn := getWeather(cityName, w, r)
+	if weatherReturn == nil {
+		weatherSpan.RecordError(fmt.Errorf("failed to get weather"))
+		return
+	}
 
 	temperatureWithCity := TemperatureWithCity{
 		Celsius:    weatherReturn.Current.TempC,
