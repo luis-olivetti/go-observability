@@ -166,26 +166,32 @@ func main() {
 	log.Println("Server shutdown completed.")
 }
 
-func getViaCep(zipCode string, w http.ResponseWriter, r *http.Request) *ViaCep {
-	url := fmt.Sprintf("http://viacep.com.br/ws/%s/json/", zipCode)
+func getViaCep(ctx context.Context, zipCode string, w http.ResponseWriter, r *http.Request) *ViaCep {
+	carrier := propagation.HeaderCarrier(r.Header)
+	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
+	ctx, span := tracer.Start(ctx, "getViaCep")
+	defer span.End()
+
+	url := fmt.Sprintf("http://viacep.com.br/ws/%s/json/", zipCode)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
+		span.RecordError(fmt.Errorf("failed to create request (viacep): %w", err))
 		http.Error(w, fmt.Sprintf("Failed to create request (viacep): %v", err), http.StatusInternalServerError)
 		return nil
 	}
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
+		span.RecordError(fmt.Errorf("failed to make HTTP request (viacep): %w", err))
 		http.Error(w, fmt.Sprintf("Failed to make HTTP request (viacep): %v", err), http.StatusInternalServerError)
 		return nil
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
+		span.RecordError(fmt.Errorf("unexpected status code (viacep): %d", res.StatusCode))
 		log.Printf("Unexpected status code (viacep): %d", res.StatusCode)
 
 		http.Error(w, "Invalid zipcode", http.StatusUnprocessableEntity)
@@ -194,28 +200,33 @@ func getViaCep(zipCode string, w http.ResponseWriter, r *http.Request) *ViaCep {
 
 	var bodyBytes []byte
 	if bodyBytes, err = io.ReadAll(res.Body); err != nil {
+		span.RecordError(fmt.Errorf("failed to read response body: %w", err))
 		http.Error(w, "Failed to read response body: "+err.Error(), http.StatusInternalServerError)
 		return nil
 	}
 
 	var viaCepErrorResponse ViaCepError
 	if err := json.Unmarshal(bodyBytes, &viaCepErrorResponse); err != nil {
+		span.RecordError(fmt.Errorf("failed to decode response (viacep): %w", err))
 		http.Error(w, "Failed to decode response (viacep): "+err.Error(), http.StatusInternalServerError)
 		return nil
 	}
 
 	if viaCepErrorResponse.Erro {
+		span.RecordError(fmt.Errorf("cannot find zipcode"))
 		http.Error(w, "Cannot find zipcode", http.StatusNotFound)
 		return nil
 	}
 
 	var viaCepResponse ViaCep
 	if err := json.Unmarshal(bodyBytes, &viaCepResponse); err != nil {
+		span.RecordError(fmt.Errorf("failed to decode response (viacep): %w", err))
 		http.Error(w, "Failed to decode response (viacep): "+err.Error(), http.StatusInternalServerError)
 		return nil
 	}
 
 	if viaCepResponse.Localidade == "" {
+		span.RecordError(fmt.Errorf("invalid zipcode"))
 		http.Error(w, "Invalid zipcode", http.StatusUnprocessableEntity)
 		return nil
 	}
@@ -223,29 +234,35 @@ func getViaCep(zipCode string, w http.ResponseWriter, r *http.Request) *ViaCep {
 	return &viaCepResponse
 }
 
-func getWeather(cityName string, w http.ResponseWriter, r *http.Request) *Weather {
+func getWeather(ctx context.Context, cityName string, w http.ResponseWriter, r *http.Request) *Weather {
+	carrier := propagation.HeaderCarrier(r.Header)
+	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+
+	ctx, span := tracer.Start(ctx, "getWeather")
+	defer span.End()
+
 	var response Weather
 
 	cityNameEncoded := neturl.QueryEscape(cityName)
 	url := fmt.Sprintf("http://api.weatherapi.com/v1/current.json?key=a91eb948a337442782b123810242601&q=%s", cityNameEncoded)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
+		span.RecordError(fmt.Errorf("failed to create request (weather): %w", err))
 		http.Error(w, fmt.Sprintf("Failed to create request (weather): %v", err), http.StatusInternalServerError)
 		return nil
 	}
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
+		span.RecordError(fmt.Errorf("failed to make HTTP request (weather): %w", err))
 		http.Error(w, fmt.Sprintf("Failed to make HTTP request (weather): %v", err), http.StatusInternalServerError)
 		return nil
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
+		span.RecordError(fmt.Errorf("unexpected status code (weather): %d", res.StatusCode))
 		log.Printf("Unexpected status code (weather): %d", res.StatusCode)
 
 		http.Error(w, "Invalid zipcode", http.StatusUnprocessableEntity)
@@ -254,6 +271,7 @@ func getWeather(cityName string, w http.ResponseWriter, r *http.Request) *Weathe
 
 	err = json.NewDecoder(res.Body).Decode(&response)
 	if err != nil {
+		span.RecordError(fmt.Errorf("failed to decode response (weather): %w", err))
 		http.Error(w, fmt.Sprintf("Failed to decode response (weather): %v", err), http.StatusInternalServerError)
 		return nil
 	}
@@ -276,23 +294,17 @@ func cityWeatherHandler(w http.ResponseWriter, r *http.Request) {
 
 	zipCode := r.URL.Query().Get("zipcode")
 
-	ctx, viaCepSpan := tracer.Start(ctx, "getViaCep")
-	defer viaCepSpan.End()
-
-	viacepReturn := getViaCep(zipCode, w, r)
+	viacepReturn := getViaCep(ctx, zipCode, w, r)
 	if viacepReturn == nil {
-		viaCepSpan.RecordError(fmt.Errorf("failed to get city name"))
+		span.RecordError(fmt.Errorf("failed to get viacep"))
 		return
 	}
 
 	cityName := viacepReturn.Localidade
 
-	_, weatherSpan := tracer.Start(ctx, "getWeather")
-	defer weatherSpan.End()
-
-	weatherReturn := getWeather(cityName, w, r)
+	weatherReturn := getWeather(ctx, cityName, w, r)
 	if weatherReturn == nil {
-		weatherSpan.RecordError(fmt.Errorf("failed to get weather"))
+		span.RecordError(fmt.Errorf("failed to get weather"))
 		return
 	}
 
