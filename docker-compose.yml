@@ -20,7 +20,7 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector:latest
     restart: always
-    command: ["--config", "/etc/otel-collector-config.yml"]
+    command: [ "--config", "/etc/otel-collector-config.yml" ]
     ports:
       - "8888:8888" ## utilizamos para permitir que o prometheus colete métricas do otel-collector
       - "8889:8889" ## utilizamos para permitir que o prometheus colete métricas do otel-collector
@@ -32,6 +32,7 @@ services:
     container_name: go-service-a
     build:
       context: service-a/
+      dockerfile: Dockerfile.prod
     environment:
       - EXTERNAL_CALL_URL=http://go-service-b:8181
       - OTEL_SERVICE_NAME=go-service-a
@@ -48,6 +49,7 @@ services:
     container_name: go-service-b
     build:
       context: service-b/
+      dockerfile: Dockerfile.prod
     environment:
       - OTEL_SERVICE_NAME=go-service-b
       - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
@@ -57,4 +59,4 @@ services:
     depends_on:
       - otel-collector
       - jaeger-all-in-one
-      - prometheus      
+      - prometheus
