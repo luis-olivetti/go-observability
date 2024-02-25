@@ -1,0 +1,4 @@
+
+GET http://localhost:8181/city-weather?zipcode=29902555 HTTP/1.1
+Host: localhost:8181
+Content-Type: application/json

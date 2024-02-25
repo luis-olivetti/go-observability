@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	neturl "net/url"
@@ -11,6 +12,10 @@ import (
 
 	"github.com/spf13/viper"
 )
+
+type ViaCepError struct {
+	Erro bool `json:"erro"`
+}
 
 type ViaCep struct {
 	Cep         string `json:"cep"`
@@ -43,7 +48,7 @@ type Weather struct {
 	} `json:"current"`
 }
 
-type Temperature struct {
+type TemperatureWithCity struct {
 	Celsius    float64 `json:"temp_C"`
 	Fahrenheit float64 `json:"temp_F"`
 	Kelvin     float64 `json:"temp_K"`
@@ -74,8 +79,6 @@ func main() {
 }
 
 func getViaCep(zipCode string, w http.ResponseWriter, r *http.Request) *ViaCep {
-	var response ViaCep
-
 	url := fmt.Sprintf("http://viacep.com.br/ws/%s/json/", zipCode)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -95,17 +98,41 @@ func getViaCep(zipCode string, w http.ResponseWriter, r *http.Request) *ViaCep {
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("Unexpected status code (viacep): %d", res.StatusCode), http.StatusInternalServerError)
+		log.Printf("Unexpected status code (viacep): %d", res.StatusCode)
+
+		http.Error(w, "Invalid zipcode", http.StatusUnprocessableEntity)
 		return nil
 	}
 
-	err = json.NewDecoder(res.Body).Decode(&response)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to decode response (viacep): %v", err), http.StatusInternalServerError)
+	var bodyBytes []byte
+	if bodyBytes, err = io.ReadAll(res.Body); err != nil {
+		http.Error(w, "Failed to read response body: "+err.Error(), http.StatusInternalServerError)
 		return nil
 	}
 
-	return &response
+	var viaCepErrorResponse ViaCepError
+	if err := json.Unmarshal(bodyBytes, &viaCepErrorResponse); err != nil {
+		http.Error(w, "Failed to decode response (viacep): "+err.Error(), http.StatusInternalServerError)
+		return nil
+	}
+
+	if viaCepErrorResponse.Erro {
+		http.Error(w, "Cannot find zipcode", http.StatusNotFound)
+		return nil
+	}
+
+	var viaCepResponse ViaCep
+	if err := json.Unmarshal(bodyBytes, &viaCepResponse); err != nil {
+		http.Error(w, "Failed to decode response (viacep): "+err.Error(), http.StatusInternalServerError)
+		return nil
+	}
+
+	if viaCepResponse.Localidade == "" {
+		http.Error(w, "Invalid zipcode", http.StatusUnprocessableEntity)
+		return nil
+	}
+
+	return &viaCepResponse
 }
 
 func getWeather(cityName string, w http.ResponseWriter, r *http.Request) *Weather {
@@ -131,7 +158,9 @@ func getWeather(cityName string, w http.ResponseWriter, r *http.Request) *Weathe
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("Unexpected status code (weather): %d", res.StatusCode), http.StatusInternalServerError)
+		log.Printf("Unexpected status code (weather): %d", res.StatusCode)
+
+		http.Error(w, "Invalid zipcode", http.StatusUnprocessableEntity)
 		return nil
 	}
 
@@ -145,19 +174,37 @@ func getWeather(cityName string, w http.ResponseWriter, r *http.Request) *Weathe
 }
 
 func cityWeatherHandler(w http.ResponseWriter, r *http.Request) {
-	zipCode := r.URL.Query().Get("zipcode")
-
-	viacep := getViaCep(zipCode, w, r)
-	weather := getWeather(viacep.Localidade, w, r)
-
-	temperature := Temperature{
-		Celsius:    weather.Current.TempC,
-		Fahrenheit: (weather.Current.TempC * 9 / 5) + 32,
-		Kelvin:     weather.Current.TempC + 273.15,
-		CityName:   viacep.Localidade,
+	if !validParams(w, r) {
+		return
 	}
 
-	// Responder com os dados obtidos
+	zipCode := r.URL.Query().Get("zipcode")
+
+	viacepReturn := getViaCep(zipCode, w, r)
+	if viacepReturn == nil {
+		return
+	}
+
+	cityName := viacepReturn.Localidade
+
+	weatherReturn := getWeather(cityName, w, r)
+
+	temperatureWithCity := TemperatureWithCity{
+		Celsius:    weatherReturn.Current.TempC,
+		Fahrenheit: (weatherReturn.Current.TempC * 9 / 5) + 32,
+		Kelvin:     weatherReturn.Current.TempC + 273.15,
+		CityName:   cityName,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(temperature)
+	json.NewEncoder(w).Encode(temperatureWithCity)
+}
+
+func validParams(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Query().Get("zipcode") == "" {
+		http.Error(w, "Missing 'zipcode' parameter", http.StatusBadRequest)
+		return false
+	}
+
+	return true
 }

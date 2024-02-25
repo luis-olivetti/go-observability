@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"regexp"
@@ -14,7 +15,7 @@ type Message struct {
 	ZipCode string `json:"cep"`
 }
 
-type Temperature struct {
+type TemperatureWithCity struct {
 	Celsius    float64 `json:"temp_C"`
 	Fahrenheit float64 `json:"temp_F"`
 	Kelvin     float64 `json:"temp_K"`
@@ -67,11 +68,17 @@ func zipcodeHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Verificar o código de status da resposta do serviço B
 	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "Failed to fetch city weather", http.StatusInternalServerError)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			http.Error(w, "Failed to read response body", http.StatusInternalServerError)
+			return
+		}
+
+		http.Error(w, string(body), resp.StatusCode)
 		return
 	}
 
-	var cityWeatherResponse Temperature
+	var cityWeatherResponse TemperatureWithCity
 	err = json.NewDecoder(resp.Body).Decode(&cityWeatherResponse)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
