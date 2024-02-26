@@ -26,7 +26,7 @@ import (
 )
 
 type ViaCepError struct {
-	Erro bool `json:"erro"`
+	Erro interface{} `json:"erro"`
 }
 
 type ViaCep struct {
@@ -208,7 +208,16 @@ func getViaCep(ctx context.Context, zipCode string, w http.ResponseWriter, r *ht
 		return nil
 	}
 
-	if viaCepErrorResponse.Erro {
+	// Devido um bug no viacep, o campo erro pode ser uma string ou um boolean
+	var foundError bool
+	switch erro := viaCepErrorResponse.Erro.(type) {
+	case bool:
+		foundError = erro
+	case string:
+		foundError = erro == "true"
+	}
+
+	if foundError {
 		span.RecordError(fmt.Errorf("cannot find zipcode"))
 		http.Error(w, "Cannot find zipcode", http.StatusNotFound)
 		return nil
